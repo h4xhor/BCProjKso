@@ -1,0 +1,25 @@
+    <div v-if="isDelRisk">
+      <app-menu v-model:cur_cust='cur_cust' 
+        v-bind:existing_customers='existing_customers'
+        vibind:text_msg='text_msg'
+        v-on:>
+      </app-menu>
+    </div>
+
+Vue.component('app-menu',{
+    props: ['cur_cust', 'existing_customers', 'text_msg'],
+
+    template:`
+    <div>
+      <select v-on:change='changeCurCust'>
+        <option v-for="cust_name in existing_customers" 
+          value="cust_name"
+          >
+            {{cust_name}}
+        </option>
+      </select>
+      <input type="text" value=text_msg>
+    </div>
+    `,
+
+});

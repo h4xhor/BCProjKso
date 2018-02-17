@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<title>BriteCore Task Frontend</title>
+	<meta charset="utf-8" />
+
+  <!-- vue.js needs to come before vue-resource -->
+  <script src="https://cdn.jsdelivr.net/npm/vue@2.5.13/dist/vue.js"></script>
+
+  <script src="https://cdn.jsdelivr.net/npm/vue-resource@1.3.6"></script>
+
+</head>
+<body>
+  <div id="app">
+
+    <p>Please select your use case:</p>
+    <select v-model="use_case" v-on:change='handleUseCase()'>
+      <option value="create_cust">Create New Customer</option>
+      <option value="del_cust">Delete Existing Customer</option>
+      <option value="create_risk">Create Risk</option>
+      <option value="edit_risk">Edit / Delete Risk</option>
+      <option value="show_all_risks">Show All Risks</option>
+    <select>
+    <p>Description: {{desc}}</p>
+
+    <div v-if="isCreateCust">
+      <p>New Customer Name: <input type="text" v-model="new_cust_name" /></p>
+      <button v-on:click="createNewCust()">Submit</button>
+    </div>
+
+    <!-- delete customer, create new risk, delete risk or edit risk -->
+    <div v-else>
+      <table>
+
+        <tr>
+          <td>Existing Customer Name Select: </td>
+
+          <td>
+            <select v-model="cur_cust" v-on:change='getAllRisksForCust()'>
+              <option v-for="cust_name in existing_customers">
+                {{cust_name}}
+              </option>
+            </select>
+          </td>
+        </tr>
+
+      </table>
+
+    </div>
+
+    <div v-if='isDelCust'>
+      <button v-on:click="delCust()">Submit</button>
+    </div>
+
+    <div v-if='isEditRisk'>
+      <table>
+        <tr>
+          <td>Risk Type</td>
+
+          <td>
+            <select v-model="risk_type" v-on:change='getSingleRiskWithFields()'>
+              <option v-for="risk in existing_risks">
+                {{risk}}
+              </option>
+            </select><br />
+          </td>
+      </table>
+
+      <button v-on:click="delRisk">Delete Risk</button>
+    </div>
+    
+    <div v-if='isCreateRisk'>
+      <p>New Risk Type: <input type="text" v-model="risk_type" /></p>
+    </div>
+
+    <div v-if='isEditOrCreateRisk'>
+
+      <table>
+        <thead>
+          <tr>
+            <td><strong>Name</strong></td>
+            <td><strong>Field Data Type</strong></td>
+            <td><strong>Value</strong></td>
+            <td><strong>Delete Field</strong></td>
+            <td v-if='isEditRisk'><strong>Save Field</strong></td>
+          </tr>
+        </thead>
+
+        <tbody>
+          <tr v-for="(row, index) in rows">
+
+            <td>
+              <input type="text" 
+                v-model="row.name" 
+                v-bind:disabled=row.notNew />
+            </td>
+
+            <td>
+              <select v-model="row.type" v-bind:disabled=row.notNew>
+                <option v-for="(field_type, field_ind) in field_types">
+                    {{field_type}}
+                </option>
+              </select>
+            </td>
+
+            <td>
+              <input v-bind:type="getInputType(row.type)" 
+                v-model="row.val" 
+                v-on:change='enableSaveButton(index)' />
+
+            </td> 
+
+            <td>
+              <button v-on:click='delField(index)'>Delete Field</button>
+            </td>
+            <td v-if='isEditRisk'>
+              <button v-bind:disabled=row.saveButDis 
+                v-on:click='saveField(index)'>
+                Save Field
+              </button>
+            </td>           
+
+          </tr>
+        </tbody>
+      </table>
+
+      <button v-on:click="addField">Add Field</button>
+
+      <button v-if='isCreateRisk' v-on:click="createRisk">Create New Risk</button>
+    </div>
+
+    <div v-if='isShowAllRisks'>
+      <p>This page is for display only. To edit (one risk at a time) please select the <i>Edit / Delete Risk</i> use case.</p>
+      <table v-for="(risk_row, risk_index) in all_risks_with_fields">
+        <thead>
+          <tr>
+            <td><strong>Risk Type: {{risk_row.risk_type}}</strong></td>
+            <td><strong>Name </strong></td>
+            <td><strong>Field Data Type</strong></td>
+            <td><strong>Value</strong></td>
+          </tr>
+        </thead>
+
+        <tbody>
+          <tr v-for='(field_row, field_index) in risk_row.fields'>
+
+            <td>
+              
+            </td>
+            <td>
+              <input type="text" 
+                v-model="field_row.name" 
+                 />
+            </td>
+
+            <td>
+              <select v-model="field_row.type">
+                <option v-for="(field_type, field_ind) in field_types">
+                    {{field_type}}
+                </option>
+              </select>
+            </td>
+
+            <td>
+              <input v-bind:type="getInputType(field_row.type)" 
+                v-model="field_row.val"/>
+
+            </td> 
+
+          </tr>
+        </tbody>
+
+      </table>
+    </div>
+
+    <p>Status: {{status_msg}}</p>
+
+    <p>Sending: {{sending}}</p>
+  </div>
+
+
+  <script src="./BCFront.js"></script>
+
+</body>
+
+</html>

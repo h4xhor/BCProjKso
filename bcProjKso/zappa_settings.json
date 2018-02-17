@@ -1,0 +1,17 @@
+{
+    "dev": {
+        "aws_region": "ap-southeast-2",
+        "django_settings": "bcProjKso.settings",
+        "profile_name": "zappa",
+        "project_name": "bcprojkso",
+        "runtime": "python3.6",
+        "s3_bucket": "zappa-9txew970k",
+        "manage_roles": false,
+        "role_name": "ksoLambdaRole",
+        "vpc_config" : {
+            "SubnetIds": [ "subnet-463aa021","subnet-1971e650" ],
+            "SecurityGroupIds": [ "sg-15c7016c" ]
+         }
+    }
+}
+
