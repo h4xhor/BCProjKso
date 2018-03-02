@@ -1,4 +1,4 @@
-const DOMAIN = 'https://t4yj00k07h.execute-api.ap-southeast-2.amazonaws.com/dev'
+const DOMAIN = 'https://8t86re13ai.execute-api.ap-southeast-2.amazonaws.com/dev'
 
 // for testing locallh
 //const DOMAIN = 'http://localhost:8081'
@@ -20,18 +20,211 @@ const ALL_RISKS = 'all_risks'
 
 const UNDEFINED = 'undefined'
 
+const TRUE_STR = 'True'
+const FALSE_STR = 'False'
+
+// seconds to hit JWT exp (30 minutes)
+const EXP_MARGIN = 1800
+
+// time from JWT originally issued at time (seconds) for refreshing JWT
+// 7 days - 30 minutes = 7*24*60*60 - 30*60 seconds
+//                     = 604800 - 1800
+//                     = 603000
+const IAT_DUR = 603000
+
+// ref https://hackernoon.com/jwt-authentication-in-vue-js-and-django-rest-framework-part-2-788f0ad53ad5
+const store = new Vuex.Store({
+  state: {
+    // allows persistence of the token with page refreshes
+    jwt: localStorage.getItem('t'),
+    isLoggedIn: localStorage.getItem('isLoggedIn'),
+
+    endpoints: {
+      obtainJWT: DOMAIN + '/genRisks/auth/obtain_token/',
+      refreshJWT: DOMAIN + '/genRisks/auth/refresh_token/'
+    }
+  },
+
+  // getters
+  getters: {
+    isLoggedIn: state => {
+      if (state.jwt) {
+        return true
+      } else {
+        return false
+      }
+    },
+
+    token_obj: state => {
+      if (state.jwt) {
+        const token = state.jwt;
+        console.log('token = ' + token)
+
+        try {
+
+          decoded = JSON.parse(atob(token.split('.')[1]))
+          console.log('dec = ' + JSON.stringify(decoded))
+
+          return decoded;
+        } catch (e) {
+          console.log('c')
+          return null;
+        }
+        console.log('d')
+      }
+    }
+  },
+
+  // invoke via this.commit()
+  mutations: {
+    updateToken(state, newToken){
+
+      localStorage.setItem('t', newToken);
+      state.jwt = newToken;
+
+      localStorage.setItem('isLoggedIn', true),
+      state.isLoggedIn = true
+    },
+
+    removeToken(state){
+      localStorage.removeItem('t');
+      state.jwt = null;
+
+      localStorage.removeItem('isLoggedIn'),
+      state.isLoggedIn = false
+
+    }
+  },
+
+  // invoke asynchronous actions via dispatch()
+  // ref [https://stackoverflow.com/questions/40165766/returning-promises-from-vuex-actions]
+  actions: {
+
+    obtainToken(context, payload) {
+      return new Promise((resolve, reject) => {
+        const json_obj = {
+          'username': payload.uname,
+          'password': payload.pw
+        }
+
+        url = this.state.endpoints.obtainJWT
+        console.log('uname = ' + payload.uname + ', pw = ' + payload.pw)
+
+        Vue.http.post(url, 
+          json_obj, 
+          {headers: {'Content-Type': 'application/json'}}).then(response => {
+
+            this.commit('updateToken', response.data.token);
+            console.log('tok = ' + response.data.token)
+            console.log(OK + ': got new token')
+            this.state.isLoggedIn = true
+
+            resolve(response) 
+
+          }, error => {
+            this.state.isLoggedIn = false
+            console.log(ERROR + ': failed to get new token')
+
+            reject(error)
+        })
+      })
+    },
+
+    refreshToken() {
+      return new Promise((resolve, reject) => {
+        const json_obj = {
+          token: this.state.jwt
+        }
+
+        url = this.state.endpoints.refreshJWT
+        
+        Vue.http.post(url, 
+          json_obj,
+          {headers: {'Content-Type': 'application/json'}}).then(response => {
+
+            this.commit('updateToken', response.data.token);
+            console.log('tok = ' + response.data.token)
+            console.log(OK + ': refreshed token')
+
+            resolve(response)
+          }, error => {
+            console.log(ERROR + ': failed to refresh token')
+            reject(error)
+        })
+      })
+    },
+
+    inspectToken() {
+      return new Promise((resolve, reject) => {
+        token_obj = this.getters.token_obj
+        if(token_obj) {
+
+          // expiry (seconds)
+          const exp = token_obj.exp
+
+          // originally issued at (seconds)
+          const orig_iat = token_obj.orig_iat
+
+          const secs_now = Date.now()/1000
+          tot_secs_left = exp - secs_now 
+
+          hrs_left = Math.trunc(tot_secs_left / (60*60))
+          mins_left = Math.trunc(tot_secs_left / 60) % 60
+          secs_left = Math.round(tot_secs_left % 60)
+          console.log('token time to expiry = ' + hrs_left + ' hrs ' + 
+            mins_left + ' mins ' + secs_left + ' secs.')
+
+          if (secs_now > exp) {
+            // expired, relogin
+            this.commit('removeToken')
+            console.log('token expired')
+
+          } else if ((exp - secs_now < EXP_MARGIN) &&
+                     (secs_now - orig_iat < IAT_DUR)) {
+            // < 30 minutes before hitting exp and
+            // 30 minutes before reaching orig_iat + 7 days
+            this.dispatch('refreshToken').then(response => {
+              resolve(response)
+            }, error => {
+              reject(error)
+            })
+
+          } else {
+            console.log('waiting for token expiry')
+            // wait for expiry
+          }
+        }
+      })
+    }
+
+  } // actions
+
+})
+
+
 var app = new Vue({
   el: "#app",
 
   // state
   data: {
-    use_case: 'del_cust',
-    new_cust_name: 'Don Joe',
+    username: '',
+    password: '',
+    is_admin: false,
 
-    existing_customers: [],
-    cur_cust: '',
+    num_users: 0,
 
-    risk_type: 'Automobile',
+    use_case: '',
+    new_username: '',
+    new_pw: '',
+    new_user_is_admin: false,
+    is_admin_text: 'no',
+
+    existing_users: [],
+    // in the case of a non admin user, user_to_show == username
+    // admin users can see all existing users
+    user_to_show: '',
+
+    risk_type: '',
 
     /* In rows, the 2nd last field are  booleans for enabling use of the 
      * Save Field button 
@@ -89,17 +282,41 @@ var app = new Vue({
     risk_type: '',
 
     sending: '',
-    status_msg: '',
+    status_msg: ''
   },
 
   // computed properties
   computed: {
-    isCreateCust: function() {
-      return "create_cust" == this.use_case
+    createFirstUser() {
+      if (0 == this.num_users) {
+        this.status_msg = 'Please create a first user. Admin privileges will be given.'
+        return true
+
+      } else {
+        return false
+      }
     },
 
-    isDelCust: function() {
-      return "del_cust" == this.use_case
+    isLoggedIn() {
+      if (store.getters.isLoggedIn) {
+        this.password = ''
+
+        // once we've got the token, get the username 
+        this.getTokenUname()
+
+        // update is_admin.
+        this.isAdmin()
+
+      }
+      return store.getters.isLoggedIn
+    },
+
+    isCreateUser: function() {
+      return "create_user" == this.use_case
+    },
+
+    isDelUser: function() {
+      return "del_user" == this.use_case
     },
 
     isCreateRisk: function() {
@@ -129,14 +346,14 @@ var app = new Vue({
 
     desc: function() {
       msg = ''
-      if (this.isCreateCust) {
-        msg = "Creates a new customer and saves to database."
-      } else if (this.isDelCust) {
-        msg = "Deletes an existing customer."
+      if (this.isCreateUser) {
+        msg = "Creates a new user and saves to database."
+      } else if (this.isDelUser) {
+        msg = "Deletes an existing user."
       } else if (this.isCreateRisk) {
-        msg = "Creates a new risk type for an existing customer."
+        msg = "Creates a new risk type for an existing user."
       } else if (this.isEditRisk) {
-        msg = "Edit or delete an existing risk type (for an existing customer)."
+        msg = "Edit or delete an existing risk type (for an existing user)."
       } else if (this.isShowAllRisks) {
         msg = 'Shows all risk types and their fields'
       } else {
@@ -149,6 +366,67 @@ var app = new Vue({
   },
 
   methods: {
+    login() {
+      if (0 == this.username.length) {
+        this.status_msg = 'Username can not be empty!'
+      } else if (0 == this.password.length) {
+        this.status_msg = 'Password can not be empty!'
+      } else {
+
+        console.log('username = ' + this.username + ', password = ' + this.password)
+        store.dispatch('obtainToken', {
+          uname: this.username, 
+          pw: this.password,
+        }).then(response => {
+          
+        }, error => {
+          if (false == store.state.isLoggedIn) {
+            this.status_msg = ERROR + ': Incorrect credentials'
+          } 
+        })
+      }
+    },
+
+    logout() {
+      store.commit('removeToken')
+      this.username = ''
+      this.new_username = ''
+      this.new_pw = ''
+      this.use_case = ''
+    },
+
+    // retrieves username info from token
+    getTokenUname() {
+      token_obj = store.getters.token_obj
+      this.username = token_obj.username
+    },
+
+    isAdmin() {
+      url = DOMAIN + '/genRisks/isAdmin/'
+
+      this.$http.get(url, 
+        {headers: {'Authorization': 'JWT ' + store.state.jwt}}).then(response => {
+
+          this.status_msg = response.body
+          console.log('isAdmin() = ' + response.body)
+          if (TRUE_STR == response.body) {
+            this.is_admin_text = 'yes'
+            this.is_admin = true
+          } else {
+            this.is_admin_text = 'no'
+            this.is_admin = false
+          }
+
+          // update GUI elements from getAllUserNames() for admin
+          // privileged users 
+          this.handleUseCase()
+
+        }, error => {
+          this.status_msg = ERROR + ': isAdmin()'
+          this.is_admin = false
+      })
+    },
+
     addField: function() {
       var elem = document.createElement('tr')
       this.rows.push(
@@ -175,11 +453,12 @@ var app = new Vue({
 
         if (true == this.rows[index].notNew) {
           // existing field
-          url = DOMAIN + '/genRisks/' + this.cur_cust + '/' +
+          url = DOMAIN + '/genRisks/' + this.user_to_show + '/' +
             this.risk_type + '/' + this.rows[index].type + '/' +
             this.rows[index].name + '/delField/'
 
-          this.$http.get(url).then(response => {
+          this.$http.get(url,
+            {headers: {'Authorization': 'JWT ' + store.state.jwt}}).then(response => {
 
             this.status_msg = response.body
 
@@ -188,7 +467,7 @@ var app = new Vue({
               this.rows.splice(index, 1)
             }
 
-          }, response => {
+          }, error => {
             this.status_msg = 'Error delField()'
           })
         } else {
@@ -211,33 +490,38 @@ var app = new Vue({
      * Note that the server may in turn return it's own internal error message
      */
     postToEndpoint: function(json_obj, url, error_msg) {
+      this.$http.post(url, 
+        json_obj, 
+        {headers: {'Authorization': 'JWT ' + store.state.jwt}}).then(response => {
 
-      json_text = JSON.stringify(json_obj);
+          this.status_msg = response.body
 
-      this.sending = json_text
+        }, error => {
+          this.status_msg = error_msg
+      })
 
-      if (this.isValidJson(json_text)) {
+    },
 
-        this.$http.post(url, 
-          json_text, 
-          {emulateJSON: true}).then(response => {
+    /* Same as postToEndpoint() but without
+     * {headers: {'Authorization': 'JWT ' + store.state.jwt}}
+     */
+    postToEndpointNoAuth: function(json_obj, url, error_msg) {
+      this.$http.post(url, 
+        json_obj).then(response => {
 
-            this.status_msg = response.body
-          }, response => {
-            this.status_msg = error_msg
-        })
+          this.status_msg = response.body
 
-      } else {
-        this.status_msg = "Invalid JSON: " + json_text
-      }
+        }, error => {
+          this.status_msg = error_msg
+      })
 
     },
 
     /* If field is new, BE will add it.
      * If field is existing, BE will update it with our modifications
      */
-    saveField: function(index) {
-      json_obj = {'customer_name': this.cur_cust, 'risk_type': this.risk_type}
+    saveField(index) {
+      json_obj = {'user_name': this.user_to_show, 'risk_type': this.risk_type}
       json_obj[FIELDS] = []
 
       json_obj[FIELDS].push(
@@ -256,15 +540,15 @@ var app = new Vue({
       if (this.isValidJson(json_text)) {
 
         this.$http.post(url, 
-          json_text, 
-          {emulateJSON: true}).then(response => {
+          json_obj, 
+          {headers: {'Authorization': 'JWT ' + store.state.jwt}}).then(response => {
 
             this.status_msg = response.body
             // update (FE)
             this.rows[index].saveButDis = true
             this.rows[index].notNew = true 
 
-          }, response => {
+          }, error => {
             this.status_msg = error_msg
         })
 
@@ -291,20 +575,62 @@ var app = new Vue({
       return true
     },
 
-    createNewCust: function() {
+    createNewUser: function() {
       this.status_msg = ''
 
-      if (0 == this.new_cust_name.length) {
-        this.status_msg = 'Customer name can not be empty!'
+      if (0 == this.new_username.length) {
+        this.status_msg = 'User name can not be empty!'
+
+      } else if (0 == this.new_pw.length) {
+        this.status_msg = 'password can not be empty!'
 
       } else {
-        json_obj = {"customer_name": this.new_cust_name}
+
+        if (true == this.new_user_is_admin) {
+          new_user_is_admin_text = TRUE_STR
+        } else {
+          new_user_is_admin_text = FALSE_STR
+        }
+
+        json_obj = {'user_name': this.new_username,
+          'new_pw': this.new_pw,
+          'new_user_is_admin': new_user_is_admin_text}
+
+        url = DOMAIN + '/genRisks/createNewUser/'
+        error_msg = ERROR + ': createNewUser()'
+
+        if (0 == this.num_users) {
+          // creating first user, bypass authentication
+          console.log('0 existing users')
+          // no need to set new_user_is_admin_text as it is ignored 
+          // and reset to TRUE_STR by server
+
+          this.$http.post(url, json_obj).then(response => {
+              this.status_msg = response.body
+
+              this.num_users = 1
+
+            }, error => {
+              this.status_msg = error_msg
+              // this.num_users still 0
+          })
 
 
-        url = DOMAIN + '/genRisks/createNewCust/'
-        error_msg = ERROR + ': createNewCust()'
+        } else {
+          // We're not creating the first user, use authentication
 
-        this.postToEndpoint(json_obj, url, error_msg)
+          this.$http.post(url, 
+            json_obj, 
+            {headers: {'Authorization': 'JWT ' + store.state.jwt}}).then(response => {
+
+              this.status_msg = response.body
+              this.num_users += 1
+
+            }, error => {
+              this.status_msg = error_msg
+          })
+
+        }
       }
     },
 
@@ -320,72 +646,85 @@ var app = new Vue({
       }
     },
 
-    delCust: function() {
-      if (0 == this.new_cust_name.length) {
-        this.status_msg = 'Customer name can not be empty!'
+    delUser: function() {
+      if (0 == this.user_to_show.length) {
+        this.status_msg = 'user name can not be empty!'
       } else {
 
-        json_obj = {"customer_name": this.cur_cust}
+        json_obj = {"user_name": this.user_to_show}
 
-        url = DOMAIN + '/genRisks/delCust/'
+        url = DOMAIN + '/genRisks/delUser/'
 
-        error_msg = ERROR + ': delCust()'
+        error_msg = ERROR + ': delUser()'
 
-        json_text = JSON.stringify(json_obj);
+        this.$http.post(url, 
+          json_obj, 
+          {headers: {'Authorization': 'JWT ' + store.state.jwt}}).then(response => {
 
-        this.sending = json_text
+            this.status_msg = response.body
+            ind = this.findKeyByVal(this.existing_users, this.user_to_show)
+            delete this.existing_users[ind]
 
-        if (this.isValidJson(json_text)) {
+            if (this.username == this.user_to_show) {
+              // deleting ourself, so remove our token also
+              store.commit('removeToken')
+            }
 
-          this.$http.post(url, 
-            json_text, 
-            {emulateJSON: true}).then(response => {
+            this.username = ''
 
-              this.status_msg = response.body
-              ind = this.findKeyByVal(this.existing_customers, this.cur_cust)
-              delete this.existing_customers[ind]
+            this.num_users -= 1
 
-            }, response => {
-              this.status_msg = error_msg
-          })
-
-        } else {
-          this.status_msg = "Invalid JSON: " + json_text
-        }
+          }, error => {
+            this.status_msg = error_msg
+        })
       }
 
     },
 
+    popExistingUsersSelect() {
+      if (true == this.is_admin) {
+        // admins can see all users
+        this.getAllUserNames()
+      } else {
+        // populate with current (non admin) user only
+        this.existing_users = [this.username]
+      }
+
+      this.user_to_show = this.username
+
+      // for all users, populate with their risks initially
+      if ((this.isEditRisk) ||
+         (this.isShowAllRisks)) {
+        this.getAllRisksForUser()
+      }
+    },
+
     // caution: vue resource runs asynchronously
-    getAllExistingCust: function() {
-      url = DOMAIN + '/genRisks/getAllCustNames/'
-      this.$http.get(url).then(response => {
-      //Vue.http.get(url).then(response => {
+    getAllUserNames() {
+      url = DOMAIN + '/genRisks/getAllUserNames/'
+      this.$http.get(url,
+        {headers: {'Authorization': 'JWT ' + store.state.jwt}}).then(response => {
 
-        this.existing_customers = response.body
+        this.existing_users = response.body
 
-        if (0 == this.existing_customers.length) {
-          this.status_msg = ERROR + ': no existing customers' 
-          this.cur_cust = ''
+        if (0 == this.existing_users.length) {
+          this.status_msg = ERROR + ': no existing users' 
+          this.user_to_show = ''
         } else {
-          this.status_msg = this.existing_customers
-          this.cur_cust = this.existing_customers['0'];
-          if ((this.isEditRisk) ||
-             (this.isShowAllRisks)) {
-            // wait until when we get a response from server then try
-            this.getAllRisksForCust()
-          }
+          this.status_msg = this.existing_users
         }
 
-      }, response => {
-        this.status_msg = 'Error getAllExistingCust()'
+      }, error => {
+        this.status_msg = 'Error getAllUserNames()'
       })
     },
 
     getSingleRiskWithFields: function() {
-      url = DOMAIN + '/genRisks/' + this.cur_cust + '/' +
+      url = DOMAIN + '/genRisks/' + this.user_to_show + '/' +
         this.risk_type + '/getSingleRiskWithFields/'
-      this.$http.get(url).then(response => {
+
+      this.$http.get(url,
+        {headers: {'Authorization': 'JWT ' + store.state.jwt}}).then(response => {
           
         json_obj = response.body
         if (UNDEFINED == json_obj['risk_type']) {
@@ -405,22 +744,23 @@ var app = new Vue({
           }
         }
 
-      }, response => {
+      }, error => {
         this.status_msg = 'Error getSingleRiskWithFields()'
       })
 
     },
 
-    getAllRisksForCust: function() {
+    getAllRisksForUser: function() {
       if (this.isEditRisk) {
-        url = DOMAIN + '/genRisks/' + this.cur_cust + '/getAllRisks/'
+        url = DOMAIN + '/genRisks/' + this.user_to_show + '/getAllRisks/'
 
-        this.$http.get(url).then(response => {
+        this.$http.get(url,
+          {headers: {'Authorization': 'JWT ' + store.state.jwt}}).then(response => {
           
           this.existing_risks = response.body
 
           if (0 == this.existing_risks.length) {
-            this.status_msg = ERROR + ': No risks found for ' + this.cur_cust
+            this.status_msg = ERROR + ': No risks found for ' + this.user_to_show
             this.risk_type = ''
 
             this.rows = []
@@ -431,8 +771,8 @@ var app = new Vue({
             this.getSingleRiskWithFields()
           }
 
-        }, response => {
-          this.status_msg = 'Error getAllRisksForCust()'
+        }, error => {
+          this.status_msg = 'Error getAllRisksForUser()'
         })
 
       } else if (this.isShowAllRisks) {
@@ -450,7 +790,7 @@ var app = new Vue({
         this.status_msg = 'Please add at least one field!'
 
       } else {
-        json_obj = {'customer_name': this.cur_cust, 'risk_type': this.risk_type}
+        json_obj = {'user_name': this.user_to_show, 'risk_type': this.risk_type}
         json_obj[FIELDS] = []
 
         for (i = 0; i < this.rows.length; i++) {
@@ -473,23 +813,25 @@ var app = new Vue({
     },
 
     delRisk: function() {
-      url = DOMAIN + '/genRisks/' + this.cur_cust + '/' +
+      url = DOMAIN + '/genRisks/' + this.user_to_show + '/' +
         this.risk_type + '/delRisk/'
 
-      this.$http.get(url).then(response => {
+      this.$http.get(url,
+        {headers: {'Authorization': 'JWT ' + store.state.jwt}}).then(response => {
 
 
         // wait until when we get a response from server then try
-        this.getAllRisksForCust()
-      }, response => {
+        this.getAllRisksForUser()
+      }, error => {
         this.status_msg = 'Error delRisk()'
       })
 
     },
 
     getAllRisksWithFields: function() {
-      url = DOMAIN + '/genRisks/' + this.cur_cust + '/getAllRisksWithFields/'
-      this.$http.get(url).then(response => {
+      url = DOMAIN + '/genRisks/' + this.user_to_show + '/getAllRisksWithFields/'
+      this.$http.get(url,
+        {headers: {'Authorization': 'JWT ' + store.state.jwt}}).then(response => {
 
         json_obj = response.body
 
@@ -525,29 +867,41 @@ var app = new Vue({
           )
         }
 
-      }, response => {
+      }, error => {
         this.status_msg = 'Error getAllRisksWithFields()'
       })
     },
 
     handleUseCase: function() {
       if (('create_risk' == this.use_case) ||
-          ('del_cust' == this.use_case) ||
+          ('del_user' == this.use_case) ||
           ('edit_risk' == this.use_case) ||
           ('show_all_risks' == this.use_case)) {
 
         this.rows = []
         this.risk_type = []
 
-        this.getAllExistingCust()
-
-
+        this.popExistingUsersSelect()
       } 
     },
-  },
 
-  mounted: function() {
-    this.handleUseCase()
+    getNumUsers() {
+      url_num_users = DOMAIN + '/genRisks/getNumUsers/'
+      this.$http.get(url_num_users).then(response => {
+
+        this.num_users = parseInt(response.body)
+
+      })
+    },
+
+  }, // methods
+
+  mounted() {
+
+    store.dispatch('inspectToken').then(response => {
+    })
+
+    this.getNumUsers()
   }
 
 })
