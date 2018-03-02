@@ -1,16 +1,41 @@
+from django.contrib.auth.models import User
+
 from django.shortcuts import render
+
 
 from django.http import HttpResponse, JsonResponse
 
-from .models import CustomerName, GenericRisk, TextField, NumberField, CurrencyField, dateField
+from django.contrib.auth import authenticate, login
+
+from .models import Users, GenericRisk, TextField, NumberField, CurrencyField, dateField
+
+# JWT
+from rest_framework.views import APIView
+from rest_framework_jwt.authentication import JSONWebTokenAuthentication, get_authorization_header
+from rest_framework.permissions import IsAuthenticated, IsAdminUser
+from rest_framework.response import Response
+
+from rest_framework_jwt.settings import api_settings
+jwt_decode_handler = api_settings.JWT_DECODE_HANDLER
+jwt_get_username_from_payload = api_settings.JWT_PAYLOAD_GET_USERNAME_HANDLER
+jwt_get_user_id_from_paylaod = api_settings.JWT_PAYLOAD_GET_USER_ID_HANDLER
+#from rest_framework_jwt.utils import jwt_decode_handler, jwt_get_username_from_payload
 
 import json
+from pprint import pprint
 
 ERROR = 'ERROR'
 OK = 'OK'
 
+# Auth
+USERNAME = 'username'
+PASSWORD = 'password'
+
 # fields
-CUSTOMER_NAME = "customer_name"
+USER_NAME = "user_name"
+NEW_PW = 'new_pw'
+NEW_USER_IS_ADMIN = 'new_user_is_admin'
+
 RISK_TYPE = "risk_type"
 FIELDS = "fields"
 NAME = 'name'
@@ -24,6 +49,9 @@ NUMBER = 'number'
 CURRENCY = 'currency'
 DATE = 'date'
 
+TRUE_STR = 'True'
+FALSE_STR = 'False'
+
 def isValidJson(json_str):
   try:
     json_object = json.loads(json_str)
@@ -31,16 +59,71 @@ def isValidJson(json_str):
     return False
   return True
 
-def index(req):
-  return HttpResponse("Hello, world. You're at the genRisks index.")
 
-# tests if a customer "cust" exists
-def customerExists(cust):
-  return CustomerName.objects.all().filter(customer_name=cust).exists()
+"""
+Test View 
+* Requires JWT authentication.
+* Only admin users (user.is_staff = true) are able to access this view.
+"""
+class index(APIView):
+  authentication_classes = (JSONWebTokenAuthentication,)
+  permission_classes = (IsAuthenticated, 
+                        IsAdminUser,)
+  
+  def get(self, req):
 
-# tests if a risk type "risk" exists in customer "cust_obj"
-def riskExists(cust_obj, risk):
-  return cust_obj.genericrisk_set.filter(risk_type = risk).exists()
+    auth = get_authorization_header(req).split()
+    jwt_value = auth[1]
+
+
+    payload = jwt_decode_handler(jwt_value)
+    username = jwt_get_username_from_payload(payload)
+    user_id = jwt_get_user_id_from_paylaod(payload)
+#    (user, token) = JSONWebTokenAuthentication().authenticate(request)
+#    msg = 'user = ' + user + ', token = ' + token
+
+#    auth = get_authorization_header(request).split()
+#    token = auth[1]
+#    token_text = token.decode('ascii')
+    msg = 'username = ' + username + ', user_id = ' + str(user_id)
+    print(msg)
+
+#    msg = 'Yo ' + payload.get('username') + ', ' + payload.get('token')
+    return Response({'msg': msg})
+
+def isUserAdmin(uname):
+  is_admin = False
+  if User.objects.all().filter(username=uname).exists():
+    user_obj = User.objects.get(username=uname)
+    if user_obj.is_staff:
+      is_admin = True 
+
+  return is_admin
+
+class isAdmin(APIView):
+  authentication_classes = (JSONWebTokenAuthentication,)
+  permission_classes = (IsAuthenticated,)
+
+  def get(self, req):
+    resp = FALSE_STR
+
+    jwt_uname = getUnameFromJWT(req)
+
+    if isUserAdmin(jwt_uname):
+      resp = TRUE_STR
+
+    msg = '"' + jwt_uname + '" is admin: ' + resp
+
+    print(msg)
+    return Response(resp)
+
+# tests if a user "user" exists
+def userExists(user):
+  return Users.objects.all().filter(user_name=user).exists()
+
+# tests if a risk type "risk" exists in user "user_obj"
+def riskExists(user_obj, risk):
+  return user_obj.genericrisk_set.filter(risk_type = risk).exists()
 
 # get JSON object from POST request
 # returns {} on failure
@@ -64,82 +147,175 @@ def getJsonObjFromPOST(req):
 
   return json_obj
 
-# Use the Django built in API
+def createUserHelper(uname, new_pw, new_user_is_admin_text):
 
-# Creates a new customer given their name.
-# Returns failure / success message.
-# Expects POST.
-def createNewCust(req):
   resp = ""
 
-  print('req = %s' % req)
-  # get keyable json object
-  json_obj = getJsonObjFromPOST(req)
+  msg = 'user_name = ' + uname + ', new_pw = ' + new_pw + ', new_user_is_admin = '
 
-  cust_name = json_obj[CUSTOMER_NAME]
+  if TRUE_STR == new_user_is_admin_text:
+    new_user_is_admin = True
+    msg += 'True'
+  else: # anything else assume false
+    new_user_is_admin = False
+    msg += 'False'
 
-  # check if customer exists
-  isExist = customerExists(cust_name)
+  print(msg)
+
+  # check if user exists
+  isExist = userExists(uname)
   
   if isExist:
-    resp = ERROR + ': "' + cust_name + '" already exists. Nothing changed.' 
+    resp = ERROR + ": '" + uname + "' already exists. Nothing changed." 
   else:
-    # add customer to database
-    cust_obj = CustomerName(customer_name=cust_name)
-    cust_obj.save()
-    resp = 'Ok: ' + cust_name + '" created.'
-  
-  print('\t' + resp)
-  return HttpResponse(resp)
+    # add user to database
 
-# Deletes customer given their name
-def delCust(req):
-  resp = ''
-  json_obj = getJsonObjFromPOST(req)
+    # our model table genRisks_users
+    user_obj = Users(user_name=uname)
+    user_obj.save()
 
-  cust_name, cust_obj = getCustObj(json_obj)
+    # auth_user
+    auth_user_obj = User.objects.create_user(uname, '', new_pw)
+    auth_user_obj.is_staff = new_user_is_admin
+    auth_user_obj.save()
+    resp = 'Ok: "' + uname + '" created. Administrator = ' + new_user_is_admin_text
 
-  if '' == cust_name:
-    resp = ERROR + ': No ' + CUSTOMER_NAME + ' field found in ' + json_text
+  return resp
 
-  elif {} == cust_obj:
-    resp = ERROR + ': ' + cust_name + '" does not exist. Nothing deleted.' 
+def getNumUsers(req):
+  if 'GET' == req.method:
+    num_users = Users.objects.all().values('user_name').count()
 
-  else:
-    # delete customer from database
-    cust_obj.delete()
-    resp = OK + ': deleted ' + cust_name + '.'
+    return HttpResponse(num_users)
 
-  print('\t' + resp)
-  return HttpResponse(resp)
+# Creates a new user given their name.
+# Returns failure / success message.
+# Expects POST.
+# Does not require authentication if there are 0 existing users.
+class createNewUser(APIView):
 
-# Returns existing customer names on success.
+  def post(self, req):
+
+    print('req = %s' % req)
+    # get keyable json object
+    json_obj = getJsonObjFromPOST(req)
+
+    uname = json_obj[USER_NAME]
+    new_pw = json_obj[NEW_PW]
+    new_user_is_admin_text = json_obj[NEW_USER_IS_ADMIN]
+
+    num_users = Users.objects.all().values('user_name').count()
+    if 0 == num_users:
+      # allow non authenticated users to create and over ride to give
+      # first user admin permissions
+      new_user_is_admin_text = TRUE_STR
+
+      resp = createUserHelper(uname, new_pw, new_user_is_admin_text)
+      print(' creating first user for time, giving admin privileges.')
+    else: # requires authentication
+      try:
+        jwt_uname = getUnameFromJWT(req)
+
+        if isUserAdmin(jwt_uname):
+          resp = createUserHelper(uname, new_pw, new_user_is_admin_text)
+
+      except IndexError:
+        resp = ERROR + ': not authenticated!' 
+
+    print('\t' + resp)
+    return Response(resp)
+
+# Returns user_name, user_obj using USER_NAME in the given json_obj
+# On return:
+# if USER_NAME is not found user_name = ''
+# if user_obj is not found user_obj = {}
+def getUserObj(json_obj):
+  user_name = ''
+  user_obj = {}
+
+  if USER_NAME in json_obj:
+    user_name = json_obj[USER_NAME]
+
+    isExist = userExists(user_name)
+
+    if isExist:
+      # get Users object with user_name 
+      user_obj = Users.objects.get(user_name = user_name)
+
+  return user_name, user_obj
+
+# Deletes user given their name
+# Admins can delete any user
+class delUser(APIView):
+  authentication_classes = (JSONWebTokenAuthentication,)
+  permission_classes = (IsAuthenticated,)
+
+  def post(self, req):
+
+    jwt_uname = getUnameFromJWT(req)
+
+    resp = ''
+    json_obj = getJsonObjFromPOST(req)
+
+    # username to apply delete on
+    user_name, user_obj = getUserObj(json_obj)
+
+    if '' == user_name:
+      resp = ERROR + ': No ' + USER_NAME + ' field found in ' + json_text
+
+    # if the "user_to_show" requested matches the token's "jwt_uname"
+    # or if the token's jwt_uname is an admin then allow
+    elif ((jwt_uname == user_name) or
+         isUserAdmin(jwt_uname)):
+
+      if {} == user_obj:
+        resp = ERROR + ': ' + user_name + '" does not exist. Nothing deleted.' 
+      else:
+
+        # delete user from genRisks_users
+        user_obj.delete()
+
+        # delete user from auth_user
+        auth_user_obj = User.objects.get(username=user_name)
+        auth_user_obj.delete()
+
+        resp = OK + ': deleted ' + user_name + '.'
+
+    else:
+      resp = ERROR + ': "' + jwt_uname + '" has no permission to delete "' + user_name + '" account.'
+
+    print('\t' + resp)
+    return Response(resp)
+
+# Returns existing user names on success.
 # Error message on error.
 # Return type is a JSON array as a string
 #   eg. {["0": "Bob", "1": "Don Joe"]}
 # On error
 #  []
 # Expects GET.
-def getAllCustNames(req):
-  # response as a dictionary
-  resp = {}
+class getAllUserNames(APIView):
+  authentication_classes = (JSONWebTokenAuthentication,)
+  permission_classes = (IsAuthenticated, 
+                        IsAdminUser,)
 
-  if 'GET' != req.method:
-    print(ERROR + ': GET method required')
-    return JsonResponse(resp, safe=False) 
+  def get(self, req):
 
-  queryset = CustomerName.objects.all().values(CUSTOMER_NAME)
-  num = queryset.count()
-  
-  if 0 == num:
-    resp = []
-  else: 
-    for i in range(num):
-      print('%d %s' % (i, queryset[i][CUSTOMER_NAME]))
-      resp[i] = queryset[i][CUSTOMER_NAME]
+    # response as a dictionary
+    resp = {}
 
-  print("resp = %s" % resp)
-  return JsonResponse(resp, safe=False)
+    queryset = Users.objects.all().values(USER_NAME)
+    num = queryset.count()
+    
+    if 0 == num:
+      resp = []
+    else: 
+      for i in range(num):
+        print('%d %s' % (i, queryset[i][USER_NAME]))
+        resp[i] = queryset[i][USER_NAME]
+
+    print("resp = %s" % resp)
+    return Response(resp)
 
 # adds a text field for the risk_obj
 def addTextField(risk_obj, name, val):
@@ -180,43 +356,24 @@ def addField(risk_obj, name, field_type, val):
   elif field_type == DATE:
     addDateField(risk_obj, name, val)
 
-# Returns cust_name, cust_obj using CUSTOMER_NAME in the given json_obj
-# On return:
-# if CUSTOMER_NAME is not found cust_name = ''
-# if cust_obj is not found cust_obj = {}
-def getCustObj(json_obj):
-  cust_name = ''
-  cust_obj = {}
-
-  if CUSTOMER_NAME in json_obj:
-    cust_name = json_obj[CUSTOMER_NAME]
-
-    isExist = customerExists(cust_name)
-
-    if isExist:
-      # get CustomerName object with cust_name 
-      cust_obj = CustomerName.objects.get(customer_name = cust_name)
-
-  return cust_name, cust_obj
-
 # Returns risk_name, risk_obj using RISK_TYPE in the given json_obj
 #'risk_type' On return:
 # if RISK_TYPE is not found risk_name = ''
 # if risk_obj is not found risk_obj = {}
-def getRiskType(cust_obj, json_obj):
+def getRiskType(user_obj, json_obj):
   risk_name = ''
   risk_obj = {}
 
   if RISK_TYPE in json_obj:
     risk_name = json_obj[RISK_TYPE] 
 
-    if riskExists(cust_obj, risk_name):
-      risk_obj = cust_obj.genericrisk_set.get(risk_type = risk_name)
+    if riskExists(user_obj, risk_name):
+      risk_obj = user_obj.genericrisk_set.get(risk_type = risk_name)
 
   return risk_name, risk_obj
 
 # Expects JSON data to be of form
-# { "customer_name": "Joe Bloggs", 
+# { "user_name": "Joe Bloggs", 
 #   "risk_type": "Automobiles", 
 #   "fields": [{"name": "make", "type": "text", "val": "Toyota" }, 
 #              {"name": "num_doors", "type": "number", "val": "5" }, 
@@ -225,138 +382,175 @@ def getRiskType(cust_obj, json_obj):
 #              {"name": "amount_insured", "type": "Currency", "val": "20000"} 
 #             ]
 # }
-def createRisk(req):
-  resp = ""
+class createRisk(APIView):
+  authentication_classes = (JSONWebTokenAuthentication,)
+  permission_classes = (IsAuthenticated,) 
 
-  json_obj = getJsonObjFromPOST(req)
-  json_text = json.dumps(json_obj)
+  def post(self, req):                                
+    resp = ""
 
-  cust_name, cust_obj = getCustObj(json_obj)
-  
-  if '' == cust_name:
-    resp = ERROR + ': No ' + CUSTOMER_NAME + ' field found in ' + json_text
+    jwt_uname = getUnameFromJWT(req)
 
-  elif {} == cust_obj:
-    resp = ERROR + ': ' + cust_name + '" does not exist. Please create first.' 
+    json_obj = getJsonObjFromPOST(req)
+    json_text = json.dumps(json_obj)
 
-  else:
-    risk_name, risk_obj = getRiskType(cust_obj, json_obj)
+    user_name, user_obj = getUserObj(json_obj)
+    print('here jwt_uname = ' + jwt_uname + ', user_name = ' + user_name)
 
-    if '' == risk_name:
-      resp = ERROR + ': No ' + RISK_TYPE + ' field found in ' + json_text
+    if '' == user_name:
+      resp = ERROR + ': No ' + USER_NAME + ' field found in ' + json_text
 
-    elif {} != risk_obj:
-      resp = ERROR + ': ' + risk_name + '" already exists.'  
-    elif FIELDS not in json_obj:
-      resp = ERROR + 'No ' + FIELDS + ' field found in ' + json_text
+    # if the given username matches JWT's or if is admin JWT
+    elif ((jwt_uname == user_name) or
+        isUserAdmin(jwt_uname)):
 
-    else:
-      num = len(json_obj['fields'])
-
-      if 0 == num:
-        resp = ERROR + ': ' + FIELDS + ' array is empty in ' + json_text
-
+      if {} == user_obj:
+        resp = ERROR + ': ' + user_name + '" does not exist. Please create first.' 
       else:
-        risk_obj = cust_obj.genericrisk_set.create(risk_type = risk_name)
-        
-        # We know that risk_type and it's associated fields
-        # does not exist yet in the database. So no need to check 
-        # for further existing fields in database from here.
-        print("  %d fields" % num)
+        risk_name, risk_obj = getRiskType(user_obj, json_obj)
 
-        for i in range(num):
-          print("%d. %s " % (i,json_obj[FIELDS][i]))
-          
-          name = json_obj[FIELDS][i][NAME]
-          field_type = json_obj[FIELDS][i][TYPE]
-          val = json_obj[FIELDS][i][VAL]
+        if '' == risk_name:
+          resp = ERROR + ': No ' + RISK_TYPE + ' field found in ' + json_text
 
-          print("%d %s %s %s" % (i, name, field_type, val))
+        elif {} != risk_obj:
+          resp = ERROR + ': "' + risk_name + '" already exists.'  
 
-          addField(risk_obj, name, field_type, val)
+        elif FIELDS not in json_obj:
+          resp = ERROR + 'No ' + FIELDS + ' field found in ' + json_text
 
-          resp = OK + "Done created new risk " + risk_name + " with: " + json_text
+        else:
+          num = len(json_obj['fields'])
 
-  print("  %s" % resp)
-  return HttpResponse(resp)
+          if 0 == num:
+            resp = ERROR + ': ' + FIELDS + ' array is empty in ' + json_text
 
-# returns the customer object cust_obj if customer cust exists
+          else:
+            risk_obj = user_obj.genericrisk_set.create(risk_type = risk_name)
+            
+            # We know that risk_type and it's associated fields
+            # does not exist yet in the database. So no need to check 
+            # for further existing fields in database from here.
+            print("  %d fields" % num)
+
+            for i in range(num):
+              print("%d. %s " % (i,json_obj[FIELDS][i]))
+              
+              name = json_obj[FIELDS][i][NAME]
+              field_type = json_obj[FIELDS][i][TYPE]
+              val = json_obj[FIELDS][i][VAL]
+
+              print("%d %s %s %s" % (i, name, field_type, val))
+
+              addField(risk_obj, name, field_type, val)
+
+              resp = OK + ": Done created new risk " + risk_name + " with: " + json_text
+    else:
+      resp = ERROR + ': "' + jwt_uname + '" has no permission to create risks for "' + user_name + '" account.'
+
+    print("  %s" % resp)
+    return Response(resp)
+
+
+# returns the user object user_obj if user user exists
 # else the empty set {}
-def getCustObjIfExists(req, cust):
-  cust_obj = {}
+def getUserObjIfExists(req, user):
+  user_obj = {}
 
   if 'GET' == req.method:
-    isExist = customerExists(cust)
+    isExist = userExists(user)
     if isExist:
-      cust_obj = CustomerName.objects.get(customer_name = cust)
+      user_obj = Users.objects.get(user_name = user)
 
     else:
-      print(ERROR + ': ' + cust + ' does not exist. Please create first.' )
+      print(ERROR + ': ' + user + ' does not exist. Please create first.' )
 
   else:
     print(ERROR + ': GET method required')
 
-  return cust_obj
+  return user_obj
 
 # returns all risks given a 
-# customer object cust_obj
+# user object user_obj
 # else the empty set {}
-def getAllRiskObjIfExists(cust_obj):
+def getAllRiskObjIfExists(user_obj):
   risk_obj = {}
 
-  if {} != cust_obj:
-    num = cust_obj.genericrisk_set.all().values().count()
+  if {} != user_obj:
+    num = user_obj.genericrisk_set.all().values().count()
 
     if 0 == num:
-      print(ERROR + ': No risks found for ' + cust_obj.customer_name)
+      print(ERROR + ': No risks found for ' + user_obj.user_name)
     else:
-      risk_obj = cust_obj.genericrisk_set.all()
+      risk_obj = user_obj.genericrisk_set.all()
 
   return risk_obj
 
 # returns the risk object risk_obj if exists given a 
-# customer object cust_obj
+# user object user_obj
 # else the empty set {}
-def getSingleRiskObjIfExists(cust_obj, cur_risk):
+def getSingleRiskObjIfExists(user_obj, cur_risk):
   risk_obj = {}
 
-  if {} != cust_obj:
-    exists = cust_obj.genericrisk_set.filter(risk_type = cur_risk).exists()
+  if {} != user_obj:
+    exists = user_obj.genericrisk_set.filter(risk_type = cur_risk).exists()
 
     if exists:
-      risk_obj = cust_obj.genericrisk_set.get(risk_type = cur_risk)
+      risk_obj = user_obj.genericrisk_set.get(risk_type = cur_risk)
     else:
-      print(ERROR + ': No risks found for ' + cust_obj.customer_name)
+      print(ERROR + ': No risks found for ' + user_obj.user_name)
 
   return risk_obj
 
-# Returns existing risks for customer cur_cust on success.
-# Return type is a JSON array as a string
+# Get username from JWT
+def getUnameFromJWT(req):
+  auth = get_authorization_header(req).split()
+  jwt_value = auth[1]
+
+  payload = jwt_decode_handler(jwt_value)
+  uname = jwt_get_username_from_payload(payload)
+
+  return uname
+
+# Returns existing risks for user cur_user on success.
+# Return type is a JSON object
 #   eg. {["0": "Automobiles", "1": "Property"]}
 # On error
 #  []
 # Expects GET.
-def getAllRisks(req, cur_cust):
-  resp = {}
+class getAllRisks(APIView):
+  authentication_classes = (JSONWebTokenAuthentication,)
+  permission_classes = (IsAuthenticated,) 
 
-  cust_obj = getCustObjIfExists(req, cur_cust)
-  risk_obj = getAllRiskObjIfExists(cust_obj)
+  def get(self, req, user_to_show):
 
-  if {} != risk_obj:
-    r_val = risk_obj.values()
-    num = r_val.count()
+    jwt_uname = getUnameFromJWT(req)
 
-    for i in range(num):
-      resp[i] = r_val[i]['risk_type']
+    resp = {}
 
-  print("resp = %s" % resp)
-  return JsonResponse(resp, safe=False)
+    # if the "user_to_show" requested matches the token's "jwt_uname"
+    # or if the token's jwt_uname is an admin then allow
+    if ((jwt_uname == user_to_show) or
+         isUserAdmin(jwt_uname)):
 
-# Gets all risks for a single customer
+      user_obj = getUserObjIfExists(req, user_to_show)
+      risk_obj = getAllRiskObjIfExists(user_obj)
+
+      if {} != risk_obj:
+        r_val = risk_obj.values()
+        num = r_val.count()
+
+        for i in range(num):
+          resp[i] = r_val[i]['risk_type']
+
+      print("resp = %s" % resp)
+
+    return Response(resp)
+
+# Gets all risks for a single user
 #
-# eg. A customer with 3 risks will have a return JSON string like this:
+# eg. A user with 3 risks will have a return JSON string like this:
 #
-# { 'customer_name': 'Joe',
+# { 'user_name': 'Joe',
 #  'all_risks': 
 #   [{"risk_type": "risk0", 
 #   "fields": [{"name": "make0", "type": "text", "val": "Toyota0" }, 
@@ -374,40 +568,50 @@ def getAllRisks(req, cur_cust):
 # }
 #
 # returns {} if there no risks exist in database
-def getAllRisksWithFields(req, cur_cust):
-  json_obj = {}
+class getAllRisksWithFields(APIView):
+  authentication_classes = (JSONWebTokenAuthentication,)
+  permission_classes = (IsAuthenticated,)
 
-  cust_obj = getCustObjIfExists(req, cur_cust)
+  def get(self, req, user_to_show):
 
-  # note risk_obj is an array
-  risk_obj = getAllRiskObjIfExists(cust_obj)
+    json_obj = {}
 
-  json_obj[CUSTOMER_NAME] = cur_cust
-  json_obj[ALL_RISKS] = []
+    jwt_uname = getUnameFromJWT(req)
 
-  if {} != risk_obj:
-    risk_obj_val = risk_obj.values()
-    num = risk_obj_val.count()
+    if ((jwt_uname == user_to_show) or
+         isUserAdmin(jwt_uname)):
 
-    for i in range(num):
-      # get a single risk object from array risk_obj
-      text_obj, num_obj, currency_obj, date_obj = getFieldsForRiskObj(risk_obj[i])
+      user_obj = getUserObjIfExists(req, user_to_show)
 
-      # temporary fields object to store risks for single risk_obj[i]
-      single_fields_obj = {}
-      single_fields_obj[FIELDS] = []
+      # note risk_obj is an array
+      risk_obj = getAllRiskObjIfExists(user_obj)
 
-      # get all the fields related to risk_obj[i]
-      appendFieldsToJsonMultipleObj(text_obj, num_obj, 
-        currency_obj, date_obj, single_fields_obj)
+      json_obj[USER_NAME] = user_to_show
+      json_obj[ALL_RISKS] = []
 
-      # append it onto json_obj
-      json_obj[ALL_RISKS].append(
-        {RISK_TYPE: risk_obj_val[i][RISK_TYPE],
-         FIELDS: single_fields_obj[FIELDS]})
+      if {} != risk_obj:
+        risk_obj_val = risk_obj.values()
+        num = risk_obj_val.count()
 
-  print("json_obj = %s" % json_obj)
-  return JsonResponse(json_obj, safe=False)
+        for i in range(num):
+          # get a single risk object from array risk_obj
+          text_obj, num_obj, currency_obj, date_obj = getFieldsForRiskObj(risk_obj[i])
+
+          # temporary fields object to store risks for single risk_obj[i]
+          single_fields_obj = {}
+          single_fields_obj[FIELDS] = []
+
+          # get all the fields related to risk_obj[i]
+          appendFieldsToJsonMultipleObj(text_obj, num_obj, 
+            currency_obj, date_obj, single_fields_obj)
+
+          # append it onto json_obj
+          json_obj[ALL_RISKS].append(
+            {RISK_TYPE: risk_obj_val[i][RISK_TYPE],
+             FIELDS: single_fields_obj[FIELDS]})
+
+      print("json_obj = %s" % json_obj)
+      return Response(json_obj)
 
 # Given risk_obj returns it's related
 # text_obj 
@@ -524,37 +728,59 @@ def getFieldsForSingleRisk(risk_obj, json_obj):
 # 
 # The Json object is something similar to the one shown in the
 # comment for createRisk
-def getSingleRiskWithFields(req, cur_cust, cur_risk):
-  json_obj = {}
+class getSingleRiskWithFields(APIView):
+  authentication_classes = (JSONWebTokenAuthentication,)
+  permission_classes = (IsAuthenticated, )
 
-  cust_obj = getCustObjIfExists(req, cur_cust)
-  risk_obj = getSingleRiskObjIfExists(cust_obj, cur_risk)
-    
-  json_obj[CUSTOMER_NAME] = cur_cust
-  json_obj[RISK_TYPE] = cur_risk
+  def get(self, req, user_to_show, risk_type):
 
-  if {} != risk_obj:
-    getFieldsForSingleRisk(risk_obj, json_obj)
+    json_obj = {}
 
-  print('json_obj = %s', json_obj)
-  return JsonResponse(json_obj, safe=False)
+    jwt_uname = getUnameFromJWT(req)
 
-# deletes risk for customer
-def delRisk(req, cur_cust, cur_risk):
-  resp = OK
+    if ((jwt_uname == user_to_show) or
+         isUserAdmin(jwt_uname)):
 
-  cust_obj = getCustObjIfExists(req, cur_cust)
-  risk_obj = getSingleRiskObjIfExists(cust_obj, cur_risk)
+      user_obj = getUserObjIfExists(req, user_to_show)
+      risk_obj = getSingleRiskObjIfExists(user_obj, risk_type)
+        
+      json_obj[USER_NAME] = user_to_show
+      json_obj[RISK_TYPE] = risk_type
 
-  if {} == cust_obj:
-    resp = ERROR + ': ' + cur_cust + " doesn't exist"
-  elif {} == risk_obj:
-    resp = ERROR + ': ' + cur_risk + " doesn't exist"
-  else:
-    print('delted risk ' + cur_risk + ' for ' + cur_cust)
-    risk_obj.delete()
+      if {} != risk_obj:
+        getFieldsForSingleRisk(risk_obj, json_obj)
 
-  return HttpResponse(resp)
+      print('json_obj = %s', json_obj)
+
+    return Response(json_obj)
+
+# deletes risk for user
+class delRisk(APIView):
+  authentication_classes = (JSONWebTokenAuthentication,)
+  permission_classes = (IsAuthenticated,) 
+
+  def get(self, req, user_to_show, risk_type):
+    resp = {}
+
+    jwt_uname = getUnameFromJWT(req)
+
+    if ((jwt_uname == user_to_show) or
+         isUserAdmin(jwt_uname)):
+
+      resp = OK
+
+      user_obj = getUserObjIfExists(req, user_to_show)
+      risk_obj = getSingleRiskObjIfExists(user_obj, risk_type)
+
+      if {} == user_obj:
+        resp = ERROR + ': ' + user_to_show + " doesn't exist"
+      elif {} == risk_obj:
+        resp = ERROR + ': ' + risk_type + " doesn't exist"
+      else:
+        print('delted risk ' + risk_type + ' for ' + user_to_show)
+        risk_obj.delete()
+
+    return Response(resp)
 
 def delFieldForSingleRisk(risk_obj, field_type, field_name):
   resp = OK + ': deleted ' + field_name
@@ -571,81 +797,104 @@ def delFieldForSingleRisk(risk_obj, field_type, field_name):
 
   return resp
 
-# deletes a field name "field" for a "risk" under a "customer"
-def delField(req, cust, risk, field_type, field_name):
-  json_obj = {}
-      
-  cust_obj = getCustObjIfExists(req, cust)
-  risk_obj = getSingleRiskObjIfExists(cust_obj, risk)
+# deletes a field name "field" for a "risk" under a "user"
+class delField(APIView):
+  authentication_classes = (JSONWebTokenAuthentication,)
+  permission_classes = (IsAuthenticated, )
 
-  resp = ''
-  if {} == cust_obj:
-    resp = ERROR + ': ' + cust + " doesn't exist"
-  elif {} == risk_obj:
-    resp = ERROR + ': ' + risk + " doesn't exist"
-  else:
-    resp = delFieldForSingleRisk(risk_obj, field_type, field_name)
+  def get(self, req, user, risk, field_type, field_name):
+  
+    json_obj = {}
 
-  print('  ' + resp)
-  return HttpResponse(resp)
+    jwt_uname = getUnameFromJWT(req)
+
+    if ((jwt_uname == user) or
+      isUserAdmin(jwt_uname)):
+
+      user_obj = getUserObjIfExists(req, user)
+      risk_obj = getSingleRiskObjIfExists(user_obj, risk)
+
+      resp = ''
+      if {} == user_obj:
+        resp = ERROR + ': ' + user + " doesn't exist"
+      elif {} == risk_obj:
+        resp = ERROR + ': ' + risk + " doesn't exist"
+      else:
+        resp = delFieldForSingleRisk(risk_obj, field_type, field_name)
+
+    print('  ' + resp)
+    return Response(resp)
 
 # If field exists, saves an exisiting field (due to modification of it's value)
 # Else adds the new field in
-def saveField(req):
-  resp = ''
+class saveField(APIView):
+  authentication_classes = (JSONWebTokenAuthentication,)
+  permission_classes = (IsAuthenticated,) 
 
-  json_obj = getJsonObjFromPOST(req)
-  json_text = json.dumps(json_obj)
+  def post(self, req):
+    jwt_uname = getUnameFromJWT(req)
 
-  cust_name, cust_obj = getCustObj(json_obj)
+    resp = ''
 
-  if '' == cust_name:
-    resp = ERROR + ': No ' + CUSTOMER_NAME + ' field found in ' + json_text
+    json_obj = getJsonObjFromPOST(req)
+    json_text = json.dumps(json_obj)
 
-  elif {} == cust_obj:
-    resp = ERROR + ': ' + cust_name + '" does not exist. Please create first.' 
+    user_name, user_obj = getUserObj(json_obj)
+    
+    
+    if '' == user_name:
+      resp = ERROR + ': No ' + USER_NAME + ' field found in ' + json_text
 
-  else:
-    risk_name, risk_obj = getRiskType(cust_obj, json_obj)
+    elif ((jwt_uname == user_name) or
+         isUserAdmin(jwt_uname)):
 
-    if '' == risk_name:
-      resp = ERROR + ': No ' + RISK_TYPE + ' field found in ' + json_text
-
-    elif {} == risk_obj:
-      resp = ERROR + ': ' + risk_name + '" does not exist. Please create first.' 
-    elif FIELDS not in json_obj:
-      resp = ERROR + 'No ' + FIELDS + ' field found in ' + json_text
-    else:
-      num = len(json_obj['fields'])
-      print("  %d fields" % num)
-
-      if 0 == num:
-        resp = ERROR + ': ' + FIELDS + ' array is empty in ' + json_text
-      elif 1 == num:
-
-        name = json_obj[FIELDS][0][NAME]
-        field_type = json_obj[FIELDS][0][TYPE]
-        val = json_obj[FIELDS][0][VAL]
-
-        if ('' == name) or ('' == val):
-          resp = ERROR + ": name or val can't be Empty"
-        else:
-          if fieldExists(risk_obj, field_type, name):
-            # field exists, update it
-            field_obj = getOneFieldObjForRiskObj(risk_obj, field_type, name)
-            print(field_obj)
-            field_obj.field_val = val
-
-            field_obj.save();
-            resp = OK + ': Saved risk = ' + risk_name + ', ' + name + ' = ' + val + ' (type = ' + field_type + ')'
-          else:
-            # field doesn't exist, add it in
-            addField(risk_obj, name, field_type, val)
-            resp = OK + ': Added ' + field_type + ' type ' + name + ' = ' + val
+      if {} == user_obj:
+        resp = ERROR + ': ' + user_name + '" does not exist. Please create first.' 
       else:
-        resp = ERROR + ': JSON string has no "' + FIELDS + '" field.' 
 
+        risk_name, risk_obj = getRiskType(user_obj, json_obj)
 
-  print("  %s" % resp)
-  return HttpResponse(resp) 
+        if '' == risk_name:
+          resp = ERROR + ': No ' + RISK_TYPE + ' field found in ' + json_text
+
+        elif {} == risk_obj:
+          resp = ERROR + ': ' + risk_name + '" does not exist. Please create first.' 
+        elif FIELDS not in json_obj:
+          resp = ERROR + 'No ' + FIELDS + ' field found in ' + json_text
+        else:
+          num = len(json_obj['fields'])
+          print("  %d fields" % num)
+
+          if 0 == num:
+            resp = ERROR + ': ' + FIELDS + ' array is empty in ' + json_text
+          elif 1 == num:
+
+            name = json_obj[FIELDS][0][NAME]
+            field_type = json_obj[FIELDS][0][TYPE]
+            val = json_obj[FIELDS][0][VAL]
+
+            if ('' == name) or ('' == val):
+              resp = ERROR + ": name or val can't be Empty"
+            else:
+              if fieldExists(risk_obj, field_type, name):
+                # field exists, update it
+                field_obj = getOneFieldObjForRiskObj(risk_obj, field_type, name)
+                print(field_obj)
+                field_obj.field_val = val
+
+                field_obj.save();
+                resp = OK + ': Saved risk = ' + risk_name + ', ' + name + ' = ' + val + ' (type = ' + field_type + ')'
+              else:
+                # field doesn't exist, add it in
+                addField(risk_obj, name, field_type, val)
+                resp = OK + ': Added ' + field_type + ' type ' + name + ' = ' + val
+          else:
+            resp = ERROR + ': JSON string has no "' + FIELDS + '" field.' 
+
+    else:
+      resp = ERROR + ': "' + jwt_uname + '" has no permission to save fields for "' + user_name + '" account.'
+
+    print("  %s" % resp)
+    return Response(resp) 
+
 

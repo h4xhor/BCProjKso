@@ -3,22 +3,21 @@ from django.db import models
 from datetime import date
 import datetime
 
-class CustomerName(models.Model):
-  customer_name = models.CharField(max_length=200)
-#   user_name = models.CharField(max_length=200)
-#   password = models.CharField(max_length=200)
+class Users(models.Model):
+  user_name = models.CharField(max_length=200)
 
   def __str__(self):
-    return self.customer_name
+    return self.user_name
     
 # Each GenericRisk (eg. Automobile)
-#   Relates to a single CustomerName
+#   Relates to a single Users
 #   Can have multiple fields:
 #      TextField
 class GenericRisk(models.Model):
-  risk_type = models.CharField(max_length=200)
 
-  customer_name = models.ForeignKey(CustomerName, on_delete=models.CASCADE)
+  users = models.ForeignKey(Users, on_delete=models.CASCADE)
+
+  risk_type = models.CharField(max_length=200)
 
   def __str__(self):
     return self.risk_type

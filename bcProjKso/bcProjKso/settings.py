@@ -11,6 +11,7 @@ https://docs.djangoproject.com/en/1.11/ref/settings/
 """
 
 import os
+import datetime
 
 # Build paths inside the project like this: os.path.join(BASE_DIR, ...)
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -20,13 +21,19 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # See https://docs.djangoproject.com/en/1.11/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'v4@)z17nq8arw#1e0)r9)h3(a=_$4=t%=cld5$!$cpncw)3bwj'
+SECRET_KEY = '[secret]'
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
+# Set True in production
+SESSION_COOKIE_SECURE = False
+CSRF_COOKIE_SECURE = False
+
+CSRF_USE_SESSIONS = True
+
 ALLOWED_HOSTS = [ '127.0.0.1', 
-                  't4yj00k07h.execute-api.ap-southeast-2.amazonaws.com',
+                  '8t86re13ai.execute-api.ap-southeast-2.amazonaws.com',
                   'localhost' ]
 
 
@@ -38,9 +45,14 @@ INSTALLED_APPS = [
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
+
+    # db backed session
     'django.contrib.sessions',
+
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'rest_framework',
+    
 ]
 
 MIDDLEWARE = [
@@ -86,27 +98,27 @@ WSGI_APPLICATION = 'bcProjKso.wsgi.application'
 
 # aws lambda
 DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.mysql',
-        'NAME': '[db_name]',
-        'USER': '[db_user]',
-        'PASSWORD': '[db_password]',
-        'HOST': '[db_host]',
-        'PORT': '[db_port]'
-    }
+  'default': {
+      'ENGINE': 'django.db.backends.mysql',
+      'NAME': '[db_name]',
+      'USER': '[db_user]',
+      'PASSWORD': '[db_password]',
+      'HOST': '[db_host]',
+      'PORT': '[db_port]'
+  }
 }
 
 ##localhost
-#DATABASES = {
-#    'default': {
-#        'ENGINE': 'django.db.backends.mysql',
-#        'NAME': 'genRiskdb',
-#        'HOST': 'localhost',
-#        'PORT': '3306',
-#        'USER': 'x',
-#        'PASSWORD': 'pass',
-#    }
-#}
+DATABASES = {
+    'default': {
+        'ENGINE': 'django.db.backends.mysql',
+        'NAME': 'genRiskdb',
+        'HOST': 'localhost',
+        'PORT': '3306',
+        'USER': 'x',
+        'PASSWORD': 'pass',
+    }
+}
 
 # Password validation
 # https://docs.djangoproject.com/en/1.11/ref/settings/#auth-password-validators
@@ -145,3 +157,23 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/1.11/howto/static-files/
 
 STATIC_URL = '/static/'
+
+# For JWT
+REST_FRAMEWORK = {
+#    'DEFAULT_PERMISSION_CLASSES': (
+#        'rest_framework.permissions.IsAuthenticated',
+#    ),
+    'DEFAULT_AUTHENTICATION_CLASSES': (
+        'rest_framework_jwt.authentication.JSONWebTokenAuthentication',
+        'rest_framework.authentication.SessionAuthentication',
+        'rest_framework.authentication.TokenAuthentication',
+        'rest_framework.authentication.BasicAuthentication',
+    ),
+}
+
+JWT_AUTH = {
+    'JWT_ALLOW_REFRESH': True,
+    'JWT_AUTH_HEADER_PREFIX': 'JWT',
+    'JWT_EXPIRATION_DELTA': datetime.timedelta(hours=2),
+    'JWT_REFRESH_EXPIRATION_DELTA': datetime.timedelta(days=7),
+}
